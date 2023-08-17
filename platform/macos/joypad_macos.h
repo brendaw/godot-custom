@@ -40,13 +40,15 @@
 
 @end
 
+// Controller support for macOS begins with macOS 10.9+,
+// however haptics (vibrations) are only supported in macOS 11+.
 @interface Joypad : NSObject
 
 @property(assign, nonatomic) BOOL force_feedback;
 @property(assign, nonatomic) NSInteger ff_effect_timestamp;
 @property(strong, nonatomic) GCController *controller;
-@property(strong, nonatomic) CHHapticEngine *motion_engine;
-@property(strong, nonatomic) id<CHHapticPatternPlayer> pattern_player;
+@property(strong, nonatomic) CHHapticEngine *motion_engine API_AVAILABLE(macosx(11));
+@property(strong, nonatomic) id<CHHapticPatternPlayer> pattern_player API_AVAILABLE(macosx(11));
 
 - (instancetype)init;
 - (instancetype)init:(GCController *)controller;
@@ -61,7 +63,9 @@ public:
 	JoypadMacOS();
 	~JoypadMacOS();
 
+	API_AVAILABLE(macosx(11))
 	void joypad_vibration_start(Joypad *p_joypad, float p_weak_magnitude, float p_strong_magnitude, float p_duration, uint64_t p_timestamp);
+	API_AVAILABLE(macosx(11))
 	void joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp);
 
 	void start_processing();

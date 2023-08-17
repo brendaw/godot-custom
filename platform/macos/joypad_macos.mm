@@ -47,28 +47,36 @@
 - (instancetype)init:(GCController *)controller {
 	self = [super init];
 	self.controller = controller;
-	self.pattern_player = nil;
 
-	CHHapticEngine *default_engine = [controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
+	if (@available(macOS 11, *)) {
+		// Haptics within the controller is only available in macOS 11+
 
-	NSSet<GCHapticsLocality> *localities = controller.haptics.supportedLocalities;
+		self.pattern_player = nil;
 
-	// If for some reason the default engine locality does not exists, we try
-	// to create an engine for all supported localities.
-	if (default_engine == nil) {
-		for (GCHapticsLocality locality in [localities allObjects]) {
-			CHHapticEngine *engine = [controller.haptics createEngineWithLocality:locality];
-			if (engine != nil) {
-				self.motion_engine = default_engine;
-				break;
+		CHHapticEngine *default_engine = [controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
+		NSSet<GCHapticsLocality> *localities = controller.haptics.supportedLocalities;
+
+		// If for some reason the default engine locality does not exists, we try
+		// to create an engine for all supported localities.
+		if (default_engine == nil) {
+			for (GCHapticsLocality locality in [localities allObjects]) {
+				CHHapticEngine *engine = [controller.haptics createEngineWithLocality:locality];
+				if (engine != nil) {
+					self.motion_engine = default_engine;
+					break;
+				}
 			}
+		} else {
+			self.motion_engine = default_engine;
 		}
-	} else {
-		self.motion_engine = default_engine;
-	}
 
-	if (self.motion_engine != nil) {
-		self.force_feedback = YES;
+		// If the motion engine isn't available, disable force feedback
+		if (self.motion_engine != nil) {
+			self.force_feedback = YES;
+		} else {
+			self.force_feedback = NO;
+		}
+
 	} else {
 		self.force_feedback = NO;
 	}
@@ -99,6 +107,7 @@ void JoypadMacOS::start_processing() {
 	process_joypads();
 }
 
+API_AVAILABLE(macosx(10.15))
 CHHapticPattern *get_vibration_pattern(float p_weak_magnitude, float p_strong_magnitude, float p_duration) {
 	// Creates a vibration pattern with 2 events, one per weak/strong magnitude.
 	NSDictionary *hapticDict = @{
@@ -447,12 +456,14 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 				Input::get_singleton()->joy_axis(joy_id, JoyAxis::TRIGGER_RIGHT, value);
 			}
 
-			if (element == gamepad.buttonOptions) {
-				Input::get_singleton()->joy_button(joy_id, JoyButton::BACK,
-						gamepad.buttonOptions.isPressed);
-			} else if (element == gamepad.buttonMenu) {
-				Input::get_singleton()->joy_button(joy_id, JoyButton::START,
-						gamepad.buttonOptions.isPressed);
+			if (@available(macOS 10.15, *)) {
+				if (element == gamepad.buttonOptions) {
+					Input::get_singleton()->joy_button(joy_id, JoyButton::BACK,
+							gamepad.buttonOptions.isPressed);
+				} else if (element == gamepad.buttonMenu) {
+					Input::get_singleton()->joy_button(joy_id, JoyButton::START,
+							gamepad.buttonOptions.isPressed);
+				}
 			}
 		};
 	} else if (controller.microGamepad != nil) {
@@ -487,35 +498,35 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 
 	/// TODO: Need to add support for controller.motion which gives us access to
 	/// the orientation of the device (if supported).
-
-	/// TODO: Need to add support for controllerPausedHandler which should be a
-	/// toggle.
 }
 
 @end
 
 void JoypadMacOS::process_joypads() {
-	NSArray *keys = [observer.connectedJoypads allKeys];
+	if (@available(macOS 11, *)) {
+		// Process vibrations in macOS 11+
+		NSArray *keys = [observer.connectedJoypads allKeys];
 
-	for (NSNumber *key in keys) {
-		int id = key.intValue;
-		Joypad *joypad = [observer.connectedJoypads objectForKey:key];
+		for (NSNumber *key in keys) {
+			int id = key.intValue;
+			Joypad *joypad = [observer.connectedJoypads objectForKey:key];
 
-		if (joypad.force_feedback) {
-			Input *input = Input::get_singleton();
-			uint64_t timestamp = input->get_joy_vibration_timestamp(id);
+			if (joypad.force_feedback) {
+				Input *input = Input::get_singleton();
+				uint64_t timestamp = input->get_joy_vibration_timestamp(id);
 
-			if (timestamp > joypad.ff_effect_timestamp) {
-				Vector2 strength = input->get_joy_vibration_strength(id);
-				float duration = input->get_joy_vibration_duration(id);
-				if (duration == 0) {
-					duration = GCHapticDurationInfinite;
-				}
+				if (timestamp > (unsigned)joypad.ff_effect_timestamp) {
+					Vector2 strength = input->get_joy_vibration_strength(id);
+					float duration = input->get_joy_vibration_duration(id);
+					if (duration == 0) {
+						duration = GCHapticDurationInfinite;
+					}
 
-				if (strength.x == 0 && strength.y == 0) {
-					joypad_vibration_stop(joypad, timestamp);
-				} else {
-					joypad_vibration_start(joypad, strength.x, strength.y, duration, timestamp);
+					if (strength.x == 0 && strength.y == 0) {
+						joypad_vibration_stop(joypad, timestamp);
+					} else {
+						joypad_vibration_start(joypad, strength.x, strength.y, duration, timestamp);
+					}
 				}
 			}
 		}
