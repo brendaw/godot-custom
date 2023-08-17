@@ -29,6 +29,7 @@
 /**************************************************************************/
 
 #import "joypad_macos.h"
+#include <Foundation/Foundation.h>
 
 #import "os_macos.h"
 
@@ -36,6 +37,48 @@
 #include "core/os/keyboard.h"
 #include "core/string/ustring.h"
 #include "main/main.h"
+
+@implementation Joypad
+
+- (instancetype)init {
+	self = [super init];
+	return self;
+}
+- (instancetype)init:(GCController *)controller {
+	self = [super init];
+	self.controller = controller;
+	self.pattern_player = nil;
+
+	CHHapticEngine *default_engine = [controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
+
+	NSSet<GCHapticsLocality> *localities = controller.haptics.supportedLocalities;
+
+	// If for some reason the default engine locality does not exists, we try
+	// to create an engine for all supported localities.
+	if (default_engine == nil) {
+		for (GCHapticsLocality locality in [localities allObjects]) {
+			CHHapticEngine *engine = [controller.haptics createEngineWithLocality:locality];
+			if (engine != nil) {
+				self.motion_engine = default_engine;
+				break;
+			}
+		}
+	} else {
+		self.motion_engine = default_engine;
+	}
+
+	if (self.motion_engine != nil) {
+		self.force_feedback = YES;
+	} else {
+		self.force_feedback = NO;
+	}
+
+	self.ff_effect_timestamp = 0;
+
+	return self;
+}
+
+@end
 
 JoypadMacOS::JoypadMacOS() {
 	observer = [[JoypadMacOSObserver alloc] init];
@@ -53,14 +96,95 @@ void JoypadMacOS::start_processing() {
 	if (observer) {
 		[observer startProcessing];
 	}
+	process_joypads();
+}
+
+CHHapticPattern *get_vibration_pattern(float p_weak_magnitude, float p_strong_magnitude, float p_duration) {
+	// Creates a vibration pattern with 2 events, one per weak/strong magnitude.
+	NSDictionary *hapticDict = @{
+		CHHapticPatternKeyPattern : @[
+			@{
+				CHHapticPatternKeyEvent : @{
+					CHHapticPatternKeyEventType : CHHapticEventTypeHapticContinuous,
+					CHHapticPatternKeyTime : @(CHHapticTimeImmediate),
+					CHHapticPatternKeyEventDuration : [NSNumber numberWithFloat:p_duration],
+
+					CHHapticPatternKeyEventParameters : @[
+						@{
+							CHHapticPatternKeyParameterID : CHHapticEventParameterIDHapticIntensity,
+							CHHapticPatternKeyParameterValue : [NSNumber numberWithFloat:p_weak_magnitude / 2]
+						},
+					],
+				},
+				CHHapticPatternKeyEvent : @{
+					CHHapticPatternKeyEventType : CHHapticEventTypeHapticContinuous,
+					CHHapticPatternKeyTime : @(CHHapticTimeImmediate),
+					CHHapticPatternKeyEventDuration : [NSNumber numberWithFloat:p_duration],
+
+					CHHapticPatternKeyEventParameters : @[
+						@{
+							CHHapticPatternKeyParameterID : CHHapticEventParameterIDHapticIntensity,
+							CHHapticPatternKeyParameterValue : [NSNumber numberWithFloat:p_strong_magnitude]
+						},
+					],
+				},
+			},
+		],
+	};
+	NSError *error;
+	CHHapticPattern *pattern = [[CHHapticPattern alloc] initWithDictionary:hapticDict error:&error];
+	return pattern;
+}
+
+void JoypadMacOS::joypad_vibration_start(Joypad *p_joypad, float p_weak_magnitude, float p_strong_magnitude, float p_duration, uint64_t p_timestamp) {
+	if (!p_joypad.force_feedback || p_weak_magnitude < 0.f || p_weak_magnitude > 1.f || p_strong_magnitude < 0.f || p_strong_magnitude > 1.f) {
+		return;
+	}
+
+	if (p_joypad.pattern_player != nil) {
+		joypad_vibration_stop(p_joypad, p_timestamp);
+	}
+
+	// Gets the default vibration pattern and creates a player with it.
+	NSError *error;
+	CHHapticPattern *pattern = get_vibration_pattern(p_weak_magnitude, p_strong_magnitude, p_duration);
+	id<CHHapticPatternPlayer> player = [p_joypad.motion_engine createPlayerWithPattern:pattern error:&error];
+
+	p_joypad.pattern_player = player;
+
+	// When all players have stopped for an engine, stop the engine.
+	[p_joypad.motion_engine notifyWhenPlayersFinished:^CHHapticEngineFinishedAction(NSError *_Nullable error) {
+		return CHHapticEngineFinishedActionStopEngine;
+	}];
+
+	// Starts the engine and execute the vibration pattern
+	[p_joypad.motion_engine startWithCompletionHandler:^(NSError *returnedError) {
+		NSError *error;
+		[player startAtTime:0 error:&error];
+		p_joypad.ff_effect_timestamp = p_timestamp;
+	}];
+}
+
+void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) {
+	if (!p_joypad.force_feedback) {
+		return;
+	}
+	if (p_joypad.pattern_player == nil) {
+		return;
+	}
+
+	NSError *error;
+	[p_joypad.pattern_player stopAtTime:0 error:&error];
+	p_joypad.pattern_player = nil;
+	p_joypad.ff_effect_timestamp = p_timestamp;
 }
 
 @interface JoypadMacOSObserver ()
 
 @property(assign, nonatomic) BOOL isObserving;
 @property(assign, nonatomic) BOOL isProcessing;
-@property(strong, nonatomic) NSMutableDictionary *connectedJoypads;
-@property(strong, nonatomic) NSMutableArray *joypadsQueue;
+@property(strong, nonatomic) NSMutableDictionary<NSNumber *, Joypad *> *connectedJoypads;
+@property(strong, nonatomic) NSMutableArray<Joypad *> *joypadsQueue;
 
 @end
 
@@ -133,8 +257,22 @@ void JoypadMacOS::start_processing() {
 	[self finishObserving];
 }
 
+- (NSArray<NSNumber *> *)getAllKeysForController:(GCController *)controller {
+	NSArray *keys = [self.connectedJoypads allKeys];
+	NSMutableArray *final_keys = [NSMutableArray array];
+
+	for (NSNumber *key in keys) {
+		Joypad *joypad = [self.connectedJoypads objectForKey:key];
+		if (joypad.controller == controller) {
+			[final_keys addObject:key];
+		}
+	}
+
+	return final_keys;
+}
+
 - (int)getJoyIdForController:(GCController *)controller {
-	NSArray *keys = [self.connectedJoypads allKeysForObject:controller];
+	NSArray *keys = [self getAllKeysForController:controller];
 
 	for (NSNumber *key in keys) {
 		int joy_id = [key intValue];
@@ -161,8 +299,10 @@ void JoypadMacOS::start_processing() {
 	// tell Godot about our new controller
 	Input::get_singleton()->joy_connection_changed(joy_id, true, String::utf8([controller.vendorName UTF8String]));
 
+	Joypad *joypad = [[Joypad alloc] init:controller];
+
 	// add it to our dictionary, this will retain our controllers
-	[self.connectedJoypads setObject:controller forKey:[NSNumber numberWithInt:joy_id]];
+	[self.connectedJoypads setObject:joypad forKey:[NSNumber numberWithInt:joy_id]];
 
 	// set our input handler
 	[self setControllerInputHandler:controller];
@@ -177,10 +317,11 @@ void JoypadMacOS::start_processing() {
 		return;
 	}
 
-	if ([[self.connectedJoypads allKeysForObject:controller] count] > 0) {
+	if ([[self getAllKeysForController:controller] count] > 0) {
 		print_verbose("Controller is already registered.");
 	} else if (!self.isProcessing) {
-		[self.joypadsQueue addObject:controller];
+		Joypad *joypad = [[Joypad alloc] init:controller];
+		[self.joypadsQueue addObject:joypad];
 	} else {
 		[self addMacOSJoypad:controller];
 	}
@@ -194,7 +335,7 @@ void JoypadMacOS::start_processing() {
 		return;
 	}
 
-	NSArray *keys = [self.connectedJoypads allKeysForObject:controller];
+	NSArray *keys = [self getAllKeysForController:controller];
 	for (NSNumber *key in keys) {
 		// tell Godot this joystick is no longer there
 		int joy_id = [key intValue];
@@ -214,7 +355,8 @@ void JoypadMacOS::start_processing() {
 	if (self.connectedJoypads == nil) {
 		NSArray *keys = [self.connectedJoypads allKeys];
 		for (NSNumber *key in keys) {
-			GCController *controller = [self.connectedJoypads objectForKey:key];
+			Joypad *joypad = [self.connectedJoypads objectForKey:key];
+			GCController *controller = joypad.controller;
 			if (controller.playerIndex == GCControllerPlayerIndex1) {
 				have_player_1 = true;
 			} else if (controller.playerIndex == GCControllerPlayerIndex2) {
@@ -351,3 +493,31 @@ void JoypadMacOS::start_processing() {
 }
 
 @end
+
+void JoypadMacOS::process_joypads() {
+	NSArray *keys = [observer.connectedJoypads allKeys];
+
+	for (NSNumber *key in keys) {
+		int id = key.intValue;
+		Joypad *joypad = [observer.connectedJoypads objectForKey:key];
+
+		if (joypad.force_feedback) {
+			Input *input = Input::get_singleton();
+			uint64_t timestamp = input->get_joy_vibration_timestamp(id);
+
+			if (timestamp > joypad.ff_effect_timestamp) {
+				Vector2 strength = input->get_joy_vibration_strength(id);
+				float duration = input->get_joy_vibration_duration(id);
+				if (duration == 0) {
+					duration = GCHapticDurationInfinite;
+				}
+
+				if (strength.x == 0 && strength.y == 0) {
+					joypad_vibration_stop(joypad, timestamp);
+				} else {
+					joypad_vibration_start(joypad, strength.x, strength.y, duration, timestamp);
+				}
+			}
+		}
+	}
+}

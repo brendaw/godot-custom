@@ -28,6 +28,8 @@
 /* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.                 */
 /**************************************************************************/
 
+#include "core/input/input.h"
+#import <CoreHaptics/CoreHaptics.h>
 #import <GameController/GameController.h>
 
 @interface JoypadMacOSObserver : NSObject
@@ -35,6 +37,19 @@
 - (void)startObserving;
 - (void)startProcessing;
 - (void)finishObserving;
+
+@end
+
+@interface Joypad : NSObject
+
+@property(assign, nonatomic) BOOL force_feedback;
+@property(assign, nonatomic) NSInteger ff_effect_timestamp;
+@property(strong, nonatomic) GCController *controller;
+@property(strong, nonatomic) CHHapticEngine *motion_engine;
+@property(strong, nonatomic) id<CHHapticPatternPlayer> pattern_player;
+
+- (instancetype)init;
+- (instancetype)init:(GCController *)controller;
 
 @end
 
@@ -46,5 +61,9 @@ public:
 	JoypadMacOS();
 	~JoypadMacOS();
 
+	void joypad_vibration_start(Joypad *p_joypad, float p_weak_magnitude, float p_strong_magnitude, float p_duration, uint64_t p_timestamp);
+	void joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp);
+
 	void start_processing();
+	void process_joypads();
 };
