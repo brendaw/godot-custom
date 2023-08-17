@@ -225,7 +225,7 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 	self.connectedJoypads = [NSMutableDictionary dictionary];
 	self.joypadsQueue = [NSMutableArray array];
 
-	// get told when controllers connect, this will be called right away for
+	// Get told when controllers connect, this will be called right away for
 	// already connected controllers
 	[[NSNotificationCenter defaultCenter]
 			addObserver:self
@@ -233,7 +233,7 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 				   name:GCControllerDidConnectNotification
 				 object:nil];
 
-	// get told when controllers disconnect
+	// Get told when controllers disconnect.
 	[[NSNotificationCenter defaultCenter]
 			addObserver:self
 			   selector:@selector(controllerWasDisconnected:)
@@ -283,7 +283,7 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 }
 
 - (void)addMacOSJoypad:(GCController *)controller {
-	// get a new id for our controller
+	// Get a new id for our controller.
 	int joy_id = Input::get_singleton()->get_unused_joy_id();
 
 	if (joy_id == -1) {
@@ -291,25 +291,25 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 		return;
 	}
 
-	// assign our player index
+	// Assign our player index.
 	if (controller.playerIndex == GCControllerPlayerIndexUnset) {
 		controller.playerIndex = [self getFreePlayerIndex];
 	}
 
-	// tell Godot about our new controller
+	// Tell Godot about our new controller.
 	Input::get_singleton()->joy_connection_changed(joy_id, true, String::utf8([controller.vendorName UTF8String]));
 
 	Joypad *joypad = [[Joypad alloc] init:controller];
 
-	// add it to our dictionary, this will retain our controllers
+	// Add it to our dictionary, this will retain our controllers.
 	[self.connectedJoypads setObject:joypad forKey:[NSNumber numberWithInt:joy_id]];
 
-	// set our input handler
+	// Set our input handler.
 	[self setControllerInputHandler:controller];
 }
 
 - (void)controllerWasConnected:(NSNotification *)notification {
-	// get our controller
+	// Get our controller.
 	GCController *controller = (GCController *)notification.object;
 
 	if (!controller) {
@@ -328,7 +328,7 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 }
 
 - (void)controllerWasDisconnected:(NSNotification *)notification {
-	// find our joystick, there should be only one in our dictionary
+	// Find our joystick, there should be only one in our dictionary.
 	GCController *controller = (GCController *)notification.object;
 
 	if (!controller) {
@@ -337,11 +337,11 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 
 	NSArray *keys = [self getAllKeysForController:controller];
 	for (NSNumber *key in keys) {
-		// tell Godot this joystick is no longer there
+		// Tell Godot this joystick is no longer there.
 		int joy_id = [key intValue];
 		Input::get_singleton()->joy_connection_changed(joy_id, false, "");
 
-		// and remove it from our dictionary
+		// And remove it from our dictionary.
 		[self.connectedJoypads removeObjectForKey:key];
 	}
 }
@@ -456,7 +456,7 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 			}
 		};
 	} else if (controller.microGamepad != nil) {
-		// micro gamepads were added in macOS 10.11 and feature just 2 buttons and a d-pad
+		// Micro gamepads were added in macOS 10.11 and feature just 2 buttons and a d-pad.
 		_weakify(self);
 		_weakify(controller);
 
@@ -485,11 +485,11 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 		};
 	}
 
-	///@TODO need to add support for controller.motion which gives us access to
-	/// the orientation of the device (if supported)
+	/// TODO: Need to add support for controller.motion which gives us access to
+	/// the orientation of the device (if supported).
 
-	///@TODO need to add support for controllerPausedHandler which should be a
-	/// toggle
+	/// TODO: Need to add support for controllerPausedHandler which should be a
+	/// toggle.
 }
 
 @end
