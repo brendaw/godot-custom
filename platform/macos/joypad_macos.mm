@@ -38,6 +38,65 @@
 #include "core/string/ustring.h"
 #include "main/main.h"
 
+@implementation RumbleMotor
+
+- (instancetype)initWithController:(GCController *)controller locality:(GCHapticsLocality)locality {
+	self = [super init];
+	self.engine = [controller.haptics createEngineWithLocality:locality];
+	self.player = nil;
+	return self;
+}
+
+- (void)execute_pattern:(CHHapticPattern *)pattern {
+	NSError *error;
+	id<CHHapticPatternPlayer> player = [self.engine createPlayerWithPattern:pattern error:&error];
+
+	// When all players have stopped for an engine, stop the engine.
+	[self.engine notifyWhenPlayersFinished:^CHHapticEngineFinishedAction(NSError *_Nullable error) {
+		return CHHapticEngineFinishedActionStopEngine;
+	}];
+
+	self.player = player;
+
+	// Starts the engine and returns if an error was encountered.
+	if (![self.engine startAndReturnError:&error]) {
+		print_verbose("Couldn't start controller haptic engine");
+		return;
+	}
+	if (![self.player startAtTime:0 error:&error]) {
+		print_verbose("Couldn't execute controller haptic pattern");
+	}
+}
+
+- (void)stop {
+	NSError *error;
+	[self.player stopAtTime:0 error:&error];
+	self.player = nil;
+}
+
+@end
+
+@implementation RumbleContext
+
+- (instancetype)init {
+	self = [super init];
+	self.weak_motor = nil;
+	self.strong_motor = nil;
+	return self;
+}
+
+- (bool)hasMotors {
+	return self.weak_motor != nil && self.strong_motor != nil;
+}
+- (bool)hasActivePlayers {
+	if (![self hasMotors]) {
+		return NO;
+	}
+	return self.weak_motor.player != nil && self.strong_motor.player != nil;
+}
+
+@end
+
 @implementation Joypad
 
 - (instancetype)init {
@@ -50,33 +109,18 @@
 
 	if (@available(macOS 11, *)) {
 		// Haptics within the controller is only available in macOS 11+
+		self.rumble_context = [[RumbleContext alloc] init];
 
-		self.pattern_player = nil;
+		// Create Weak and Strong motors for controller.
+		self.rumble_context.weak_motor = [[RumbleMotor alloc] initWithController:controller locality:GCHapticsLocalityRightHandle];
+		self.rumble_context.strong_motor = [[RumbleMotor alloc] initWithController:controller locality:GCHapticsLocalityLeftHandle];
 
-		CHHapticEngine *default_engine = [controller.haptics createEngineWithLocality:GCHapticsLocalityDefault];
-		NSSet<GCHapticsLocality> *localities = controller.haptics.supportedLocalities;
-
-		// If for some reason the default engine locality does not exists, we try
-		// to create an engine for all supported localities.
-		if (default_engine == nil) {
-			for (GCHapticsLocality locality in [localities allObjects]) {
-				CHHapticEngine *engine = [controller.haptics createEngineWithLocality:locality];
-				if (engine != nil) {
-					self.motion_engine = default_engine;
-					break;
-				}
-			}
-		} else {
-			self.motion_engine = default_engine;
-		}
-
-		// If the motion engine isn't available, disable force feedback
-		if (self.motion_engine != nil) {
-			self.force_feedback = YES;
-		} else {
+		// If the rumble motors aren't available, disable force feedback.
+		if (![self.rumble_context hasMotors]) {
 			self.force_feedback = NO;
+		} else {
+			self.force_feedback = YES;
 		}
-
 	} else {
 		self.force_feedback = NO;
 	}
@@ -108,8 +152,8 @@ void JoypadMacOS::start_processing() {
 }
 
 API_AVAILABLE(macosx(10.15))
-CHHapticPattern *get_vibration_pattern(float p_weak_magnitude, float p_strong_magnitude, float p_duration) {
-	// Creates a vibration pattern with 2 events, one per weak/strong magnitude.
+CHHapticPattern *get_vibration_pattern(float p_magnitude, float p_duration) {
+	// Creates a vibration pattern with an intensity and duration.
 	NSDictionary *hapticDict = @{
 		CHHapticPatternKeyPattern : @[
 			@{
@@ -121,19 +165,7 @@ CHHapticPattern *get_vibration_pattern(float p_weak_magnitude, float p_strong_ma
 					CHHapticPatternKeyEventParameters : @[
 						@{
 							CHHapticPatternKeyParameterID : CHHapticEventParameterIDHapticIntensity,
-							CHHapticPatternKeyParameterValue : [NSNumber numberWithFloat:p_weak_magnitude / 2]
-						},
-					],
-				},
-				CHHapticPatternKeyEvent : @{
-					CHHapticPatternKeyEventType : CHHapticEventTypeHapticContinuous,
-					CHHapticPatternKeyTime : @(CHHapticTimeImmediate),
-					CHHapticPatternKeyEventDuration : [NSNumber numberWithFloat:p_duration],
-
-					CHHapticPatternKeyEventParameters : @[
-						@{
-							CHHapticPatternKeyParameterID : CHHapticEventParameterIDHapticIntensity,
-							CHHapticPatternKeyParameterValue : [NSNumber numberWithFloat:p_strong_magnitude]
+							CHHapticPatternKeyParameterValue : [NSNumber numberWithFloat:p_magnitude]
 						},
 					],
 				},
@@ -150,41 +182,39 @@ void JoypadMacOS::joypad_vibration_start(Joypad *p_joypad, float p_weak_magnitud
 		return;
 	}
 
-	if (p_joypad.pattern_player != nil) {
+	// If there is active vibration players, stop them.
+	if ([p_joypad.rumble_context hasActivePlayers]) {
 		joypad_vibration_stop(p_joypad, p_timestamp);
 	}
 
-	// Gets the default vibration pattern and creates a player with it.
-	NSError *error;
-	CHHapticPattern *pattern = get_vibration_pattern(p_weak_magnitude, p_strong_magnitude, p_duration);
-	id<CHHapticPatternPlayer> player = [p_joypad.motion_engine createPlayerWithPattern:pattern error:&error];
+	// Gets the default vibration pattern and creates a player for each motor.
+	CHHapticPattern *weak_pattern = get_vibration_pattern(p_weak_magnitude, p_duration);
+	CHHapticPattern *strong_pattern = get_vibration_pattern(p_strong_magnitude, p_duration);
 
-	p_joypad.pattern_player = player;
+	RumbleMotor *weak_motor = p_joypad.rumble_context.weak_motor;
+	RumbleMotor *strong_motor = p_joypad.rumble_context.strong_motor;
 
-	// When all players have stopped for an engine, stop the engine.
-	[p_joypad.motion_engine notifyWhenPlayersFinished:^CHHapticEngineFinishedAction(NSError *_Nullable error) {
-		return CHHapticEngineFinishedActionStopEngine;
-	}];
+	[weak_motor execute_pattern:weak_pattern];
+	[strong_motor execute_pattern:strong_pattern];
 
-	// Starts the engine and execute the vibration pattern
-	[p_joypad.motion_engine startWithCompletionHandler:^(NSError *returnedError) {
-		NSError *error;
-		[player startAtTime:0 error:&error];
-		p_joypad.ff_effect_timestamp = p_timestamp;
-	}];
+	p_joypad.ff_effect_timestamp = p_timestamp;
 }
 
 void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) {
 	if (!p_joypad.force_feedback) {
 		return;
 	}
-	if (p_joypad.pattern_player == nil) {
+	// If there is no active vibration players, exit.
+	if (![p_joypad.rumble_context hasActivePlayers]) {
 		return;
 	}
 
-	NSError *error;
-	[p_joypad.pattern_player stopAtTime:0 error:&error];
-	p_joypad.pattern_player = nil;
+	RumbleMotor *weak_motor = p_joypad.rumble_context.weak_motor;
+	RumbleMotor *strong_motor = p_joypad.rumble_context.strong_motor;
+
+	[weak_motor stop];
+	[strong_motor stop];
+
 	p_joypad.ff_effect_timestamp = p_timestamp;
 }
 
@@ -235,7 +265,7 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 	self.joypadsQueue = [NSMutableArray array];
 
 	// Get told when controllers connect, this will be called right away for
-	// already connected controllers
+	// already connected controllers.
 	[[NSNotificationCenter defaultCenter]
 			addObserver:self
 			   selector:@selector(controllerWasConnected:)

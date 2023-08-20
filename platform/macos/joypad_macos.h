@@ -40,6 +40,20 @@
 
 @end
 
+API_AVAILABLE(macosx(11))
+@interface RumbleMotor : NSObject
+@property(strong, nonatomic) CHHapticEngine *engine;
+@property(strong, nonatomic) id<CHHapticPatternPlayer> player;
+@end
+
+API_AVAILABLE(macosx(11))
+@interface RumbleContext : NSObject
+// High frecuency motor, it's usually the right engine
+@property(strong, nonatomic) RumbleMotor *weak_motor;
+// Low frecuency motor, it's usually the left engine
+@property(strong, nonatomic) RumbleMotor *strong_motor;
+@end
+
 // Controller support for macOS begins with macOS 10.9+,
 // however haptics (vibrations) are only supported in macOS 11+.
 @interface Joypad : NSObject
@@ -47,8 +61,7 @@
 @property(assign, nonatomic) BOOL force_feedback;
 @property(assign, nonatomic) NSInteger ff_effect_timestamp;
 @property(strong, nonatomic) GCController *controller;
-@property(strong, nonatomic) CHHapticEngine *motion_engine API_AVAILABLE(macosx(11));
-@property(strong, nonatomic) id<CHHapticPatternPlayer> pattern_player API_AVAILABLE(macosx(11));
+@property(strong, nonatomic) RumbleContext *rumble_context API_AVAILABLE(macosx(11));
 
 - (instancetype)init;
 - (instancetype)init:(GCController *)controller;
