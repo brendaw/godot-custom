@@ -48,9 +48,9 @@ API_AVAILABLE(macosx(11))
 
 API_AVAILABLE(macosx(11))
 @interface RumbleContext : NSObject
-// High frecuency motor, it's usually the right engine
+// High frequency motor, it's usually the right engine
 @property(strong, nonatomic) RumbleMotor *weak_motor;
-// Low frecuency motor, it's usually the left engine
+// Low frequency motor, it's usually the left engine
 @property(strong, nonatomic) RumbleMotor *strong_motor;
 @end
 
