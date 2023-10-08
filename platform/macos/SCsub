@@ -28,7 +28,7 @@ files = [
     "gl_manager_macos_legacy.mm",
 ]
 
-env.Append(CCFLAGS=["-fmodules", "-fcxx-modules"])
+env.Append(CCFLAGS=["-fmodules", "-fcxx-modules", "-Wno-module-import-in-extern-c"])
 
 prog = env.add_program("#bin/godot", files)
 
