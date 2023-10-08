@@ -466,6 +466,12 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 						gamepad.dpad.left.isPressed);
 				Input::get_singleton()->joy_button(joy_id, JoyButton::DPAD_RIGHT,
 						gamepad.dpad.right.isPressed);
+			} else if (element == gamepad.leftThumbstickButton) {
+				Input::get_singleton()->joy_button(joy_id, JoyButton::LEFT_STICK,
+						gamepad.leftThumbstickButton.isPressed);
+			} else if (element == gamepad.rightThumbstickButton) {
+				Input::get_singleton()->joy_button(joy_id, JoyButton::RIGHT_STICK,
+						gamepad.rightThumbstickButton.isPressed);
 			}
 
 			if (element == gamepad.leftThumbstick) {
