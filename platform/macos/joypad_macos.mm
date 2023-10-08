@@ -498,7 +498,7 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 							gamepad.buttonOptions.isPressed);
 				} else if (element == gamepad.buttonMenu) {
 					Input::get_singleton()->joy_button(joy_id, JoyButton::START,
-							gamepad.buttonOptions.isPressed);
+							gamepad.buttonMenu.isPressed);
 				}
 			}
 		};
