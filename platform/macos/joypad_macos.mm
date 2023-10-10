@@ -466,12 +466,6 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 						gamepad.dpad.left.isPressed);
 				Input::get_singleton()->joy_button(joy_id, JoyButton::DPAD_RIGHT,
 						gamepad.dpad.right.isPressed);
-			} else if (element == gamepad.leftThumbstickButton) {
-				Input::get_singleton()->joy_button(joy_id, JoyButton::LEFT_STICK,
-						gamepad.leftThumbstickButton.isPressed);
-			} else if (element == gamepad.rightThumbstickButton) {
-				Input::get_singleton()->joy_button(joy_id, JoyButton::RIGHT_STICK,
-						gamepad.rightThumbstickButton.isPressed);
 			}
 
 			if (element == gamepad.leftThumbstick) {
@@ -492,6 +486,16 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 				Input::get_singleton()->joy_axis(joy_id, JoyAxis::TRIGGER_RIGHT, value);
 			}
 
+			if (@available(macOS 10.14.1, *)) {
+				if (element == gamepad.leftThumbstickButton) {
+					Input::get_singleton()->joy_button(joy_id, JoyButton::LEFT_STICK,
+							gamepad.leftThumbstickButton.isPressed);
+				} else if (element == gamepad.rightThumbstickButton) {
+					Input::get_singleton()->joy_button(joy_id, JoyButton::RIGHT_STICK,
+							gamepad.rightThumbstickButton.isPressed);
+				}
+			}
+
 			if (@available(macOS 10.15, *)) {
 				if (element == gamepad.buttonOptions) {
 					Input::get_singleton()->joy_button(joy_id, JoyButton::BACK,
@@ -499,6 +503,23 @@ void JoypadMacOS::joypad_vibration_stop(Joypad *p_joypad, uint64_t p_timestamp) 
 				} else if (element == gamepad.buttonMenu) {
 					Input::get_singleton()->joy_button(joy_id, JoyButton::START,
 							gamepad.buttonMenu.isPressed);
+				}
+			}
+
+			if (@available(macOS 11, *)) {
+				if (element == gamepad.buttonHome) {
+					Input::get_singleton()->joy_button(joy_id, JoyButton::GUIDE,
+							gamepad.buttonHome.isPressed);
+				}
+			}
+
+			if (@available(macOS 12, *)) {
+				if ([gamepad isKindOfClass:[GCXboxGamepad class]]) {
+					GCXboxGamepad *xboxGamepad = (GCXboxGamepad *)gamepad;
+					if (element == xboxGamepad.buttonShare) {
+						Input::get_singleton()->joy_button(joy_id, JoyButton::MISC1,
+								xboxGamepad.buttonShare.isPressed);
+					}
 				}
 			}
 		};
