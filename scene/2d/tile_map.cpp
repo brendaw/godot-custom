@@ -447,6 +447,9 @@ void TileMapLayer::_rendering_update() {
 			for (KeyValue<Vector2i, CellData> &kv : tile_map) {
 				CellData &cell_data = kv.value;
 				for (const RID &occluder : cell_data.occluders) {
+					if (occluder.is_null()) {
+						continue;
+					}
 					Transform2D xform(0, tile_map_node->map_to_local(kv.key));
 					rs->canvas_light_occluder_attach_to_canvas(occluder, tile_map_node->get_canvas());
 					rs->canvas_light_occluder_set_transform(occluder, tile_map_node->get_global_transform() * xform);
@@ -565,6 +568,15 @@ void TileMapLayer::_rendering_occluders_update_cell(CellData &r_cell_data) {
 	const Ref<TileSet> &tile_set = tile_map_node->get_tileset();
 	RenderingServer *rs = RenderingServer::get_singleton();
 
+	// Free unused occluders then resize the occluders array.
+	for (uint32_t i = tile_set->get_occlusion_layers_count(); i < r_cell_data.occluders.size(); i++) {
+		RID occluder_id = r_cell_data.occluders[i];
+		if (occluder_id.is_valid()) {
+			rs->free(occluder_id);
+		}
+	}
+	r_cell_data.occluders.resize(tile_set->get_occlusion_layers_count());
+
 	TileSetSource *source;
 	if (tile_set->has_source(r_cell_data.cell.source_id)) {
 		source = *tile_set->get_source(r_cell_data.cell.source_id);
@@ -580,18 +592,35 @@ void TileMapLayer::_rendering_occluders_update_cell(CellData &r_cell_data) {
 					tile_data = atlas_source->get_tile_data(r_cell_data.cell.get_atlas_coords(), r_cell_data.cell.alternative_tile);
 				}
 
-				// Update/create occluders.
-				for (int i = 0; i < tile_set->get_occlusion_layers_count(); i++) {
-					Transform2D xform;
-					xform.set_origin(tile_map_node->map_to_local(r_cell_data.coords));
-					if (tile_data->get_occluder(i).is_valid()) {
-						RID occluder_id = rs->canvas_light_occluder_create();
-						rs->canvas_light_occluder_set_enabled(occluder_id, node_visible);
-						rs->canvas_light_occluder_set_transform(occluder_id, tile_map_node->get_global_transform() * xform);
-						rs->canvas_light_occluder_set_polygon(occluder_id, tile_map_node->get_transformed_polygon(Ref<Resource>(tile_data->get_occluder(i)), r_cell_data.cell.alternative_tile)->get_rid());
-						rs->canvas_light_occluder_attach_to_canvas(occluder_id, tile_map_node->get_canvas());
-						rs->canvas_light_occluder_set_light_mask(occluder_id, tile_set->get_occlusion_layer_light_mask(i));
-						r_cell_data.occluders.push_back(occluder_id);
+				// Transform flags.
+				bool flip_h = (r_cell_data.cell.alternative_tile & TileSetAtlasSource::TRANSFORM_FLIP_H);
+				bool flip_v = (r_cell_data.cell.alternative_tile & TileSetAtlasSource::TRANSFORM_FLIP_V);
+				bool transpose = (r_cell_data.cell.alternative_tile & TileSetAtlasSource::TRANSFORM_TRANSPOSE);
+
+				// Create, update or clear occluders.
+				for (uint32_t occlusion_layer_index = 0; occlusion_layer_index < r_cell_data.occluders.size(); occlusion_layer_index++) {
+					Ref<OccluderPolygon2D> occluder_polygon = tile_data->get_occluder(occlusion_layer_index);
+
+					RID &occluder = r_cell_data.occluders[occlusion_layer_index];
+
+					if (occluder_polygon.is_valid()) {
+						// Create or update occluder.
+						Transform2D xform;
+						xform.set_origin(tile_map_node->map_to_local(r_cell_data.coords));
+						if (!occluder.is_valid()) {
+							occluder = rs->canvas_light_occluder_create();
+						}
+						rs->canvas_light_occluder_set_enabled(occluder, node_visible);
+						rs->canvas_light_occluder_set_transform(occluder, tile_map_node->get_global_transform() * xform);
+						rs->canvas_light_occluder_set_polygon(occluder, tile_data->get_occluder(occlusion_layer_index, flip_h, flip_v, transpose)->get_rid());
+						rs->canvas_light_occluder_attach_to_canvas(occluder, tile_map_node->get_canvas());
+						rs->canvas_light_occluder_set_light_mask(occluder, tile_set->get_occlusion_layer_light_mask(occlusion_layer_index));
+					} else {
+						// Clear occluder.
+						if (occluder.is_valid()) {
+							rs->free(occluder);
+							occluder = RID();
+						}
 					}
 				}
 
@@ -777,8 +806,13 @@ void TileMapLayer::_physics_update_cell(CellData &r_cell_data) {
 					tile_data = atlas_source->get_tile_data(c.get_atlas_coords(), c.alternative_tile);
 				}
 
+				// Transform flags.
+				bool flip_h = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_FLIP_H);
+				bool flip_v = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_FLIP_V);
+				bool transpose = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_TRANSPOSE);
+
 				// Free unused bodies then resize the bodies array.
-				for (unsigned int i = tile_set->get_physics_layers_count(); i < r_cell_data.bodies.size(); i++) {
+				for (uint32_t i = tile_set->get_physics_layers_count(); i < r_cell_data.bodies.size(); i++) {
 					RID body = r_cell_data.bodies[i];
 					if (body.is_valid()) {
 						bodies_coords.erase(body);
@@ -787,7 +821,7 @@ void TileMapLayer::_physics_update_cell(CellData &r_cell_data) {
 				}
 				r_cell_data.bodies.resize(tile_set->get_physics_layers_count());
 
-				for (int tile_set_physics_layer = 0; tile_set_physics_layer < tile_set->get_physics_layers_count(); tile_set_physics_layer++) {
+				for (uint32_t tile_set_physics_layer = 0; tile_set_physics_layer < (uint32_t)tile_set->get_physics_layers_count(); tile_set_physics_layer++) {
 					Ref<PhysicsMaterial> physics_material = tile_set->get_physics_layer_physics_material(tile_set_physics_layer);
 					uint32_t physics_layer = tile_set->get_physics_layer_collision_layer(tile_set_physics_layer);
 					uint32_t physics_mask = tile_set->get_physics_layer_collision_mask(tile_set_physics_layer);
@@ -841,8 +875,7 @@ void TileMapLayer::_physics_update_cell(CellData &r_cell_data) {
 							int shapes_count = tile_data->get_collision_polygon_shapes_count(tile_set_physics_layer, polygon_index);
 							for (int shape_index = 0; shape_index < shapes_count; shape_index++) {
 								// Add decomposed convex shapes.
-								Ref<ConvexPolygonShape2D> shape = tile_data->get_collision_polygon_shape(tile_set_physics_layer, polygon_index, shape_index);
-								shape = tile_map_node->get_transformed_polygon(Ref<Resource>(shape), c.alternative_tile);
+								Ref<ConvexPolygonShape2D> shape = tile_data->get_collision_polygon_shape(tile_set_physics_layer, polygon_index, shape_index, flip_h, flip_v, transpose);
 								ps->body_add_shape(body, shape->get_rid());
 								ps->body_set_shape_as_one_way_collision(body, body_shape_index, one_way_collision, one_way_collision_margin);
 
@@ -998,7 +1031,7 @@ void TileMapLayer::_navigation_update() {
 void TileMapLayer::_navigation_clear_cell(CellData &r_cell_data) {
 	NavigationServer2D *ns = NavigationServer2D::get_singleton();
 	// Clear navigation shapes.
-	for (unsigned int i = 0; i < r_cell_data.navigation_regions.size(); i++) {
+	for (uint32_t i = 0; i < r_cell_data.navigation_regions.size(); i++) {
 		const RID &region = r_cell_data.navigation_regions[i];
 		if (region.is_valid()) {
 			ns->region_set_map(region, RID());
@@ -1030,8 +1063,13 @@ void TileMapLayer::_navigation_update_cell(CellData &r_cell_data) {
 					tile_data = atlas_source->get_tile_data(c.get_atlas_coords(), c.alternative_tile);
 				}
 
+				// Transform flags.
+				bool flip_h = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_FLIP_H);
+				bool flip_v = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_FLIP_V);
+				bool transpose = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_TRANSPOSE);
+
 				// Free unused regions then resize the regions array.
-				for (unsigned int i = tile_set->get_navigation_layers_count(); i < r_cell_data.navigation_regions.size(); i++) {
+				for (uint32_t i = tile_set->get_navigation_layers_count(); i < r_cell_data.navigation_regions.size(); i++) {
 					RID &region = r_cell_data.navigation_regions[i];
 					if (region.is_valid()) {
 						ns->region_set_map(region, RID());
@@ -1042,10 +1080,8 @@ void TileMapLayer::_navigation_update_cell(CellData &r_cell_data) {
 				r_cell_data.navigation_regions.resize(tile_set->get_navigation_layers_count());
 
 				// Create, update or clear regions.
-				for (unsigned int navigation_layer_index = 0; navigation_layer_index < r_cell_data.navigation_regions.size(); navigation_layer_index++) {
-					Ref<NavigationPolygon> navigation_polygon;
-					navigation_polygon = tile_data->get_navigation_polygon(navigation_layer_index);
-					navigation_polygon = tile_map_node->get_transformed_polygon(Ref<Resource>(navigation_polygon), c.alternative_tile);
+				for (uint32_t navigation_layer_index = 0; navigation_layer_index < r_cell_data.navigation_regions.size(); navigation_layer_index++) {
+					Ref<NavigationPolygon> navigation_polygon = tile_data->get_navigation_polygon(navigation_layer_index, flip_h, flip_v, transpose);
 
 					RID &region = r_cell_data.navigation_regions[navigation_layer_index];
 
@@ -1138,9 +1174,11 @@ void TileMapLayer::_navigation_draw_cell_debug(const RID &p_canvas_item, const V
 				rs->canvas_item_add_set_transform(p_canvas_item, cell_to_quadrant);
 
 				for (int layer_index = 0; layer_index < tile_set->get_navigation_layers_count(); layer_index++) {
-					Ref<NavigationPolygon> navigation_polygon = tile_data->get_navigation_polygon(layer_index);
+					bool flip_h = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_FLIP_H);
+					bool flip_v = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_FLIP_V);
+					bool transpose = (c.alternative_tile & TileSetAtlasSource::TRANSFORM_TRANSPOSE);
+					Ref<NavigationPolygon> navigation_polygon = tile_data->get_navigation_polygon(layer_index, flip_h, flip_v, transpose);
 					if (navigation_polygon.is_valid()) {
-						navigation_polygon = tile_map_node->get_transformed_polygon(Ref<Resource>(navigation_polygon), c.alternative_tile);
 						Vector<Vector2> navigation_polygon_vertices = navigation_polygon->get_vertices();
 						if (navigation_polygon_vertices.size() < 3) {
 							continue;
@@ -1191,7 +1229,7 @@ void TileMapLayer::_scenes_update() {
 	const Ref<TileSet> &tile_set = tile_map_node->get_tileset();
 
 	// Check if we should cleanup everything.
-	bool forced_cleanup = in_destructor || !enabled || !tile_map_node->is_inside_tree() || !tile_set.is_valid() || !tile_map_node->is_visible_in_tree();
+	bool forced_cleanup = in_destructor || !enabled || !tile_map_node->is_inside_tree() || !tile_set.is_valid();
 
 	if (forced_cleanup) {
 		// Clean everything.
@@ -3096,11 +3134,6 @@ void TileMap::_internal_update() {
 		return;
 	}
 
-	// FIXME: This should only clear polygons that are no longer going to be used, but since it's difficult to determine,
-	// the cache is never cleared at runtime to prevent invalidating used polygons.
-	if (Engine::get_singleton()->is_editor_hint()) {
-		polygon_cache.clear();
-	}
 	// Update dirty quadrants on layers.
 	for (Ref<TileMapLayer> &layer : layers) {
 		layer->internal_update();
@@ -3250,7 +3283,7 @@ void TileMap::add_layer(int p_to_pos) {
 	new_layer.instantiate();
 	new_layer->set_tile_map(this);
 	layers.insert(p_to_pos, new_layer);
-	for (unsigned int i = 0; i < layers.size(); i++) {
+	for (uint32_t i = 0; i < layers.size(); i++) {
 		layers[i]->set_layer_index_in_tile_map_node(i);
 	}
 	queue_internal_update();
@@ -3269,7 +3302,7 @@ void TileMap::move_layer(int p_layer, int p_to_pos) {
 	Ref<TileMapLayer> layer = layers[p_layer];
 	layers.insert(p_to_pos, layer);
 	layers.remove_at(p_to_pos < p_layer ? p_layer + 1 : p_layer);
-	for (unsigned int i = 0; i < layers.size(); i++) {
+	for (uint32_t i = 0; i < layers.size(); i++) {
 		layers[i]->set_layer_index_in_tile_map_node(i);
 	}
 	queue_internal_update();
@@ -3289,7 +3322,7 @@ void TileMap::remove_layer(int p_layer) {
 
 	// Clear before removing the layer.
 	layers.remove_at(p_layer);
-	for (unsigned int i = 0; i < layers.size(); i++) {
+	for (uint32_t i = 0; i < layers.size(); i++) {
 		layers[i]->set_layer_index_in_tile_map_node(i);
 	}
 	queue_internal_update();
@@ -3526,7 +3559,7 @@ Vector2i TileMap::get_coords_for_body_rid(RID p_physics_body) {
 }
 
 int TileMap::get_layer_for_body_rid(RID p_physics_body) {
-	for (unsigned int i = 0; i < layers.size(); i++) {
+	for (uint32_t i = 0; i < layers.size(); i++) {
 		if (layers[i]->has_body_rid(p_physics_body)) {
 			return i;
 		}
@@ -3576,7 +3609,7 @@ Rect2 TileMap::_edit_get_rect() const {
 	bool changed = false;
 	Rect2 rect = layers[0]->get_rect(changed);
 	any_changed |= changed;
-	for (unsigned int i = 1; i < layers.size(); i++) {
+	for (uint32_t i = 1; i < layers.size(); i++) {
 		rect = rect.merge(layers[i]->get_rect(changed));
 		any_changed |= changed;
 	}
@@ -3584,37 +3617,6 @@ Rect2 TileMap::_edit_get_rect() const {
 	return rect;
 }
 #endif
-
-PackedVector2Array TileMap::_get_transformed_vertices(const PackedVector2Array &p_vertices, int p_alternative_id) {
-	const Vector2 *r = p_vertices.ptr();
-	int size = p_vertices.size();
-
-	PackedVector2Array new_points;
-	new_points.resize(size);
-	Vector2 *w = new_points.ptrw();
-
-	bool flip_h = (p_alternative_id & TileSetAtlasSource::TRANSFORM_FLIP_H);
-	bool flip_v = (p_alternative_id & TileSetAtlasSource::TRANSFORM_FLIP_V);
-	bool transpose = (p_alternative_id & TileSetAtlasSource::TRANSFORM_TRANSPOSE);
-
-	for (int i = 0; i < size; i++) {
-		Vector2 v;
-		if (transpose) {
-			v = Vector2(r[i].y, r[i].x);
-		} else {
-			v = r[i];
-		}
-
-		if (flip_h) {
-			v.x *= -1;
-		}
-		if (flip_v) {
-			v.y *= -1;
-		}
-		w[i] = v;
-	}
-	return new_points;
-}
 
 bool TileMap::_set(const StringName &p_name, const Variant &p_value) {
 	Vector<String> components = String(p_name).split("/", true, 2);
@@ -3755,7 +3757,7 @@ void TileMap::_get_property_list(List<PropertyInfo> *p_list) const {
 		p_list->push_back(PropertyInfo(m_type, property_name, PROPERTY_HINT_NONE, m_hint, (get(property_name) == property_get_revert(property_name)) ? PROPERTY_USAGE_EDITOR : PROPERTY_USAGE_DEFAULT)); \
 	}
 
-	for (unsigned int i = 0; i < layers.size(); i++) {
+	for (uint32_t i = 0; i < layers.size(); i++) {
 		MAKE_LAYER_PROPERTY(Variant::STRING, "name", "");
 		MAKE_LAYER_PROPERTY(Variant::BOOL, "enabled", "");
 		MAKE_LAYER_PROPERTY(Variant::COLOR, "modulate", "");
@@ -4612,57 +4614,6 @@ void TileMap::draw_cells_outline(Control *p_control, const RBSet<Vector2i> &p_ce
 		}
 	}
 #undef DRAW_SIDE_IF_NEEDED
-}
-
-Ref<Resource> TileMap::get_transformed_polygon(Ref<Resource> p_polygon, int p_alternative_id) {
-	if (!bool(p_alternative_id & (TileSetAtlasSource::TRANSFORM_FLIP_H | TileSetAtlasSource::TRANSFORM_FLIP_V | TileSetAtlasSource::TRANSFORM_TRANSPOSE))) {
-		return p_polygon;
-	}
-
-	{
-		HashMap<Pair<Ref<Resource>, int>, Ref<Resource>, PairHash<Ref<Resource>, int>>::Iterator E = polygon_cache.find(Pair<Ref<Resource>, int>(p_polygon, p_alternative_id));
-		if (E) {
-			return E->value;
-		}
-	}
-
-	Ref<ConvexPolygonShape2D> col = p_polygon;
-	if (col.is_valid()) {
-		Ref<ConvexPolygonShape2D> ret;
-		ret.instantiate();
-		ret->set_points(_get_transformed_vertices(col->get_points(), p_alternative_id));
-		polygon_cache[Pair<Ref<Resource>, int>(p_polygon, p_alternative_id)] = ret;
-		return ret;
-	}
-
-	Ref<NavigationPolygon> nav = p_polygon;
-	if (nav.is_valid()) {
-		PackedVector2Array new_points = _get_transformed_vertices(nav->get_vertices(), p_alternative_id);
-		Ref<NavigationPolygon> ret;
-		ret.instantiate();
-		ret->set_vertices(new_points);
-
-		PackedInt32Array indices;
-		indices.resize(new_points.size());
-		int *w = indices.ptrw();
-		for (int i = 0; i < new_points.size(); i++) {
-			w[i] = i;
-		}
-		ret->add_polygon(indices);
-		polygon_cache[Pair<Ref<Resource>, int>(p_polygon, p_alternative_id)] = ret;
-		return ret;
-	}
-
-	Ref<OccluderPolygon2D> ocd = p_polygon;
-	if (ocd.is_valid()) {
-		Ref<OccluderPolygon2D> ret;
-		ret.instantiate();
-		ret->set_polygon(_get_transformed_vertices(ocd->get_polygon(), p_alternative_id));
-		polygon_cache[Pair<Ref<Resource>, int>(p_polygon, p_alternative_id)] = ret;
-		return ret;
-	}
-
-	return p_polygon;
 }
 
 PackedStringArray TileMap::get_configuration_warnings() const {

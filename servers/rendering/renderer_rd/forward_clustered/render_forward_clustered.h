@@ -40,6 +40,7 @@
 #include "servers/rendering/renderer_rd/forward_clustered/scene_shader_forward_clustered.h"
 #include "servers/rendering/renderer_rd/pipeline_cache_rd.h"
 #include "servers/rendering/renderer_rd/renderer_scene_render_rd.h"
+#include "servers/rendering/renderer_rd/shaders/forward_clustered/best_fit_normal.glsl.gen.h"
 #include "servers/rendering/renderer_rd/shaders/forward_clustered/scene_forward_clustered.glsl.gen.h"
 #include "servers/rendering/renderer_rd/storage_rd/utilities.h"
 
@@ -63,8 +64,6 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 		TRANSFORMS_UNIFORM_SET = 2,
 		MATERIAL_UNIFORM_SET = 3,
 	};
-
-	const int SAMPLERS_BINDING_FIRST_INDEX = 16;
 
 	enum {
 		SPEC_CONSTANT_SOFT_SHADOW_SAMPLES = 6,
@@ -158,22 +157,20 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 
 	virtual void setup_render_buffer_data(Ref<RenderSceneBuffersRD> p_render_buffers) override;
 
-	enum BaseUniformSetCache {
-		BASE_UNIFORM_SET_CACHE_VIEWPORT,
-		BASE_UNIFORM_SET_CACHE_DEFAULT,
-		BASE_UNIFORM_SET_CACHE_MAX
-	};
-
 	RID render_base_uniform_set;
-	// One for custom samplers, one for default samplers.
-	// Need to switch between them as default is needed for probes, shadows, materials, etc.
-	RID render_base_uniform_set_cache[BASE_UNIFORM_SET_CACHE_MAX];
 
-	uint64_t lightmap_texture_array_version_cache[BASE_UNIFORM_SET_CACHE_MAX] = { 0xFFFFFFFF, 0xFFFFFFFF };
+	uint64_t lightmap_texture_array_version = 0xFFFFFFFF;
 
-	void _update_render_base_uniform_set(const RendererRD::MaterialStorage::Samplers &p_samplers, BaseUniformSetCache p_cache_index);
-	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture);
-	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, bool p_use_directional_shadow_atlas = false, int p_index = 0);
+	void _update_render_base_uniform_set();
+	RID _setup_sdfgi_render_pass_uniform_set(RID p_albedo_texture, RID p_emission_texture, RID p_emission_aniso_texture, RID p_geom_facing_texture, const RendererRD::MaterialStorage::Samplers &p_samplers);
+	RID _setup_render_pass_uniform_set(RenderListType p_render_list, const RenderDataRD *p_render_data, RID p_radiance_texture, const RendererRD::MaterialStorage::Samplers &p_samplers, bool p_use_directional_shadow_atlas = false, int p_index = 0);
+
+	struct BestFitNormal {
+		BestFitNormalShaderRD shader;
+		RID shader_version;
+		RID pipeline;
+		RID texture;
+	} best_fit_normal;
 
 	enum PassMode {
 		PASS_MODE_COLOR,
@@ -247,6 +244,7 @@ class RenderForwardClustered : public RendererSceneRenderRD {
 
 	// When changing any of these enums, remember to change the corresponding enums in the shader files as well.
 	enum {
+		INSTANCE_DATA_FLAGS_DYNAMIC = 1 << 3,
 		INSTANCE_DATA_FLAGS_NON_UNIFORM_SCALE = 1 << 4,
 		INSTANCE_DATA_FLAG_USE_GI_BUFFERS = 1 << 5,
 		INSTANCE_DATA_FLAG_USE_SDFGI = 1 << 6,

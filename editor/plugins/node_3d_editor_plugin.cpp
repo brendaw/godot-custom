@@ -4152,9 +4152,9 @@ Node *Node3DEditorViewport::_sanitize_preview_node(Node *p_node) const {
 }
 
 void Node3DEditorViewport::_create_preview_node(const Vector<String> &files) const {
+	bool add_preview = false;
 	for (int i = 0; i < files.size(); i++) {
-		String path = files[i];
-		Ref<Resource> res = ResourceLoader::load(path);
+		Ref<Resource> res = ResourceLoader::load(files[i]);
 		ERR_CONTINUE(res.is_null());
 		Ref<PackedScene> scene = Ref<PackedScene>(Object::cast_to<PackedScene>(*res));
 		Ref<Mesh> mesh = Ref<Mesh>(Object::cast_to<Mesh>(*res));
@@ -4172,9 +4172,13 @@ void Node3DEditorViewport::_create_preview_node(const Vector<String> &files) con
 					}
 				}
 			}
-			EditorNode::get_singleton()->get_scene_root()->add_child(preview_node);
+			add_preview = true;
 		}
 	}
+	if (add_preview) {
+		EditorNode::get_singleton()->get_scene_root()->add_child(preview_node);
+	}
+
 	*preview_bounds = _calculate_spatial_bounds(preview_node);
 }
 
